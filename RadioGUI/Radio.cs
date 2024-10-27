@@ -55,7 +55,7 @@ namespace RadioControllerApp
             // Form properties
             this.Text = "Radio Controller";
             this.Size = new System.Drawing.Size(800, 700);
-            this.MinimumSize = new System.Drawing.Size(600, 6<s00);
+            this.MinimumSize = new System.Drawing.Size(600, 600);
             this.FormClosing += FormRadio_FormClosing;
 
             // Initialize controls
