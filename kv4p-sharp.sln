@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.11.35312.102
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "kv4p-sharp-lib", "kv4p-sharp\kv4p-sharp-lib.csproj", "{321A4BEA-94AB-4345-91EA-A603180603D4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RadioGUI", "RadioGUI\RadioGUI.csproj", "{833C55A9-5DE4-4B46-8F4A-63EA59325E17}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{321A4BEA-94AB-4345-91EA-A603180603D4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{321A4BEA-94AB-4345-91EA-A603180603D4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{321A4BEA-94AB-4345-91EA-A603180603D4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{321A4BEA-94AB-4345-91EA-A603180603D4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{833C55A9-5DE4-4B46-8F4A-63EA59325E17}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{833C55A9-5DE4-4B46-8F4A-63EA59325E17}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{833C55A9-5DE4-4B46-8F4A-63EA59325E17}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{833C55A9-5DE4-4B46-8F4A-63EA59325E17}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {19C17713-1168-468F-9761-FAC3257E0E68}
+	EndGlobalSection
+EndGlobal
