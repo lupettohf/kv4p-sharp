@@ -60,23 +60,21 @@ namespace RadioControllerApp
 
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(FormRadio));
-            SuspendLayout();
-            // 
-            // FormRadio
-            // 
-            AutoScaleDimensions = new SizeF(144F, 144F);
-            AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(778, 644);
-            Icon = (Icon)resources.GetObject("$this.Icon");
-            KeyPreview = true;
-            MinimumSize = new Size(600, 600);
-            Name = "FormRadio";
-            Text = "Radio Controller";
-            FormClosing += FormRadio_FormClosing;
-            KeyDown += FormRadio_KeyDown;
-            KeyUp += FormRadio_KeyUp;
-            ResumeLayout(false);
+            this.AutoScaleMode = AutoScaleMode.Dpi; // Enable DPI scaling
+
+            // Form properties
+            this.Text = "Radio Controller";
+            this.Size = new System.Drawing.Size(800, 700);
+            this.MinimumSize = new System.Drawing.Size(600, 600);
+            this.FormClosing += FormRadio_FormClosing;
+
+            // Enable KeyPreview to capture key events
+            this.KeyPreview = true;
+            this.KeyDown += FormRadio_KeyDown;
+            this.KeyUp += FormRadio_KeyUp;
+
+            // Initialize controls
+            InitializeControls();
         }
 
         private void InitializeControls()
