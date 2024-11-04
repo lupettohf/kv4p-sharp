@@ -3,22 +3,36 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using NAudio.Wave;
+using System.Collections.Generic;
+using System.Collections.Concurrent;
 
 namespace RadioControllerApp
 {
     public class FormRadio : Form
     {
+
+        // Pre-buffering fields
+        private const int PreBufferSize = 5000; // Adjust as needed
+        private ConcurrentQueue<byte[]> preBufferQueue = new ConcurrentQueue<byte[]>();
+        private int preBufferedBytes = 0;
+        private bool preBufferingComplete = false;
+
         private RadioController radioController;
         private WaveInEvent waveIn;
         private BufferedWaveProvider receivedAudioBuffer;
         private WaveOutEvent waveOut;
+
         private bool isRecording = false;
+        private bool isTransmitting = false;
+
+        // PTT Key Handling
+        private Keys pttKey = Keys.Space;
+        private bool waitingForPTTKey = false;
 
         // UI Controls
         private TextBox txtPortName;
         private Button btnOpenConnection;
         private Button btnCloseConnection;
-        private Button btnInitialize;
 
         private TextBox txtTXFrequency;
         private TextBox txtRXFrequency;
@@ -31,35 +45,38 @@ namespace RadioControllerApp
         private CheckBox chkLowpass;
         private Button btnSetFilters;
 
-        private Button btnStartRX;
-        private Button btnStartTX;
-        private Button btnEndTX;
-        private Button btnStop;
-
-        private Button btnStartRecording;
-        private Button btnStopRecording;
-        private Button btnPlayReceivedAudio;
+        private Button btnSetPTTKey;
 
         private TextBox txtStatus;
+
+        private Panel pnlStatusIndicator;
 
         public FormRadio()
         {
             InitializeComponent();
             InitializeRadioController();
+            LoadConfigurations();
         }
 
         private void InitializeComponent()
         {
-            this.AutoScaleMode = AutoScaleMode.Dpi; // Enable DPI scaling
-
-            // Form properties
-            this.Text = "Radio Controller";
-            this.Size = new System.Drawing.Size(800, 700);
-            this.MinimumSize = new System.Drawing.Size(600, 600);
-            this.FormClosing += FormRadio_FormClosing;
-
-            // Initialize controls
-            InitializeControls();
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(FormRadio));
+            SuspendLayout();
+            // 
+            // FormRadio
+            // 
+            AutoScaleDimensions = new SizeF(144F, 144F);
+            AutoScaleMode = AutoScaleMode.Dpi;
+            ClientSize = new Size(778, 644);
+            Icon = (Icon)resources.GetObject("$this.Icon");
+            KeyPreview = true;
+            MinimumSize = new Size(600, 600);
+            Name = "FormRadio";
+            Text = "Radio Controller";
+            FormClosing += FormRadio_FormClosing;
+            KeyDown += FormRadio_KeyDown;
+            KeyUp += FormRadio_KeyUp;
+            ResumeLayout(false);
         }
 
         private void InitializeControls()
@@ -74,33 +91,37 @@ namespace RadioControllerApp
             };
             this.Controls.Add(mainLayout);
 
-            // Adjust row styles
+            // Insert row styles
+            mainLayout.RowStyles.Insert(0, new RowStyle(SizeType.Absolute, 20F)); // Status Indicator
             mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Connection Controls
             mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Frequency Controls
             mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Filter Controls
-            mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Mode Controls
             mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Audio Controls
             mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); // Status TextBox
+
+            // Status Indicator Panel
+            pnlStatusIndicator = new Panel
+            {
+                Height = 20,
+                Dock = DockStyle.Fill,
+                BackColor = System.Drawing.Color.Green // Assume green for RX
+            };
+            mainLayout.Controls.Add(pnlStatusIndicator, 0, 0);
 
             // Connection Controls GroupBox
             GroupBox grpConnection = CreateConnectionControls();
             grpConnection.Dock = DockStyle.Fill;
-            mainLayout.Controls.Add(grpConnection, 0, 0);
+            mainLayout.Controls.Add(grpConnection, 0, 1);
 
             // Frequency Controls GroupBox
             GroupBox grpFrequency = CreateFrequencyControls();
             grpFrequency.Dock = DockStyle.Fill;
-            mainLayout.Controls.Add(grpFrequency, 0, 1);
+            mainLayout.Controls.Add(grpFrequency, 0, 2);
 
             // Filter Controls GroupBox
             GroupBox grpFilters = CreateFilterControls();
             grpFilters.Dock = DockStyle.Fill;
-            mainLayout.Controls.Add(grpFilters, 0, 2);
-
-            // Mode Controls GroupBox
-            GroupBox grpModes = CreateModeControls();
-            grpModes.Dock = DockStyle.Fill;
-            mainLayout.Controls.Add(grpModes, 0, 3);
+            mainLayout.Controls.Add(grpFilters, 0, 3);
 
             // Audio Controls GroupBox
             GroupBox grpAudio = CreateAudioControls();
@@ -130,7 +151,7 @@ namespace RadioControllerApp
             TableLayoutPanel layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 5,
+                ColumnCount = 4,
                 AutoSize = true
             };
             grpConnection.Controls.Add(layout);
@@ -139,23 +160,19 @@ namespace RadioControllerApp
             txtPortName = new TextBox { Text = "COM3", Anchor = AnchorStyles.Left };
             btnOpenConnection = new Button { Text = "Open Connection", AutoSize = true };
             btnCloseConnection = new Button { Text = "Close Connection", AutoSize = true };
-            btnInitialize = new Button { Text = "Initialize", AutoSize = true };
 
             btnOpenConnection.Click += btnOpenConnection_Click;
             btnCloseConnection.Click += btnCloseConnection_Click;
-            btnInitialize.Click += btnInitialize_Click;
 
             layout.Controls.Add(lblPortName, 0, 0);
             layout.Controls.Add(txtPortName, 1, 0);
             layout.Controls.Add(btnOpenConnection, 2, 0);
             layout.Controls.Add(btnCloseConnection, 3, 0);
-            layout.Controls.Add(btnInitialize, 4, 0);
 
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Label
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // TextBox
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33F)); // Button
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33F)); // Button
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34F)); // Button
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F)); // Button
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F)); // Button
 
             return grpConnection;
         }
@@ -243,41 +260,6 @@ namespace RadioControllerApp
             return grpFilters;
         }
 
-        private GroupBox CreateModeControls()
-        {
-            GroupBox grpModes = new GroupBox
-            {
-                Text = "Mode Controls",
-                AutoSize = true,
-                Dock = DockStyle.Fill
-            };
-
-            FlowLayoutPanel layout = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                AutoSize = true,
-                WrapContents = false,
-            };
-            grpModes.Controls.Add(layout);
-
-            btnStartRX = new Button { Text = "Start RX Mode", AutoSize = true };
-            btnStartTX = new Button { Text = "Start TX Mode", AutoSize = true };
-            btnEndTX = new Button { Text = "End TX Mode", AutoSize = true };
-            btnStop = new Button { Text = "Stop", AutoSize = true };
-
-            btnStartRX.Click += btnStartRX_Click;
-            btnStartTX.Click += btnStartTX_Click;
-            btnEndTX.Click += btnEndTX_Click;
-            btnStop.Click += btnStop_Click;
-
-            layout.Controls.Add(btnStartRX);
-            layout.Controls.Add(btnStartTX);
-            layout.Controls.Add(btnEndTX);
-            layout.Controls.Add(btnStop);
-
-            return grpModes;
-        }
-
         private GroupBox CreateAudioControls()
         {
             GroupBox grpAudio = new GroupBox
@@ -295,17 +277,10 @@ namespace RadioControllerApp
             };
             grpAudio.Controls.Add(layout);
 
-            btnStartRecording = new Button { Text = "Start Recording", AutoSize = true };
-            btnStopRecording = new Button { Text = "Stop Recording", AutoSize = true };
-            btnPlayReceivedAudio = new Button { Text = "Play Received Audio", AutoSize = true };
+            btnSetPTTKey = new Button { Text = "Set PTT Key", AutoSize = true };
+            btnSetPTTKey.Click += btnSetPTTKey_Click;
 
-            btnStartRecording.Click += btnStartRecording_Click;
-            btnStopRecording.Click += btnStopRecording_Click;
-            btnPlayReceivedAudio.Click += btnPlayReceivedAudio_Click;
-
-            layout.Controls.Add(btnStartRecording);
-            layout.Controls.Add(btnStopRecording);
-            layout.Controls.Add(btnPlayReceivedAudio);
+            layout.Controls.Add(btnSetPTTKey);
 
             return grpAudio;
         }
@@ -315,8 +290,15 @@ namespace RadioControllerApp
             // Disable controls that require an open connection
             ToggleControls(false);
 
-            receivedAudioBuffer = new BufferedWaveProvider(new WaveFormat(44100, 16, 1));
+            receivedAudioBuffer = new BufferedWaveProvider(new WaveFormat(44100, 8, 1))
+            {
+                BufferDuration = TimeSpan.FromSeconds(5),
+                DiscardOnBufferOverflow = true
+            };
+            waveOut = new WaveOutEvent();
+            waveOut.Init(receivedAudioBuffer);
         }
+
 
         private void btnOpenConnection_Click(object sender, EventArgs e)
         {
@@ -334,7 +316,14 @@ namespace RadioControllerApp
                 radioController.AudioDataReceived += RadioController_AudioDataReceived;
                 radioController.OpenConnection();
 
+                radioController.Initialize();
+                btnTune_Click(null, null);
+                // Start RX mode
+                isTransmitting = false;
+                UpdateStatusIndicator(false);
+
                 AppendStatus($"Connection opened on {portName}.");
+                radioController.StartRXMode();
                 ToggleControls(true);
             }
             catch (Exception ex)
@@ -359,19 +348,6 @@ namespace RadioControllerApp
             catch (Exception ex)
             {
                 AppendStatus($"Error closing connection: {ex.Message}");
-            }
-        }
-
-        private void btnInitialize_Click(object sender, EventArgs e)
-        {
-            try
-            {
-                radioController.Initialize();
-                AppendStatus("Radio initialized.");
-            }
-            catch (Exception ex)
-            {
-                AppendStatus($"Error initializing radio: {ex.Message}");
             }
         }
 
@@ -410,59 +386,44 @@ namespace RadioControllerApp
             }
         }
 
-        private void btnStartRX_Click(object sender, EventArgs e)
+        private void btnSetPTTKey_Click(object sender, EventArgs e)
         {
-            try
+            AppendStatus("Press any key to set as PTT.");
+            waitingForPTTKey = true;
+        }
+
+        private void FormRadio_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (waitingForPTTKey)
             {
-                radioController.StartRXMode();
-                AppendStatus("Started RX mode.");
+                pttKey = e.KeyCode;
+                waitingForPTTKey = false;
+                AppendStatus($"PTT key set to: {pttKey}");
+                e.Handled = true;
             }
-            catch (Exception ex)
+            else if (e.KeyCode == pttKey)
             {
-                AppendStatus($"Error starting RX mode: {ex.Message}");
+                if (!isTransmitting)
+                {
+                    StartTransmission();
+                }
+                e.Handled = true;
             }
         }
 
-        private void btnStartTX_Click(object sender, EventArgs e)
+        private void FormRadio_KeyUp(object sender, KeyEventArgs e)
         {
-            try
+            if (!waitingForPTTKey && e.KeyCode == pttKey)
             {
-                radioController.StartTXMode();
-                AppendStatus("Started TX mode.");
-            }
-            catch (Exception ex)
-            {
-                AppendStatus($"Error starting TX mode: {ex.Message}");
+                if (isTransmitting)
+                {
+                    StopTransmission();
+                }
+                e.Handled = true;
             }
         }
 
-        private void btnEndTX_Click(object sender, EventArgs e)
-        {
-            try
-            {
-                radioController.EndTXMode();
-                AppendStatus("Ended TX mode.");
-            }
-            catch (Exception ex)
-            {
-                AppendStatus($"Error ending TX mode: {ex.Message}");
-            }
-        }
-
-        private void btnStop_Click(object sender, EventArgs e)
-        {
-            try
-            {
-                radioController.Stop();
-                AppendStatus("Radio stopped.");
-            }
-            catch (Exception ex)
-            {
-                AppendStatus($"Error stopping radio: {ex.Message}");
-            }
-        }
-
-        private void btnStartRecording_Click(object sender, EventArgs e)
+        private void StartTransmission()
         {
             try
             {
@@ -473,39 +434,45 @@ namespace RadioControllerApp
                 }
 
                 radioController.StartTXMode();
-                isRecording = true;
+                isTransmitting = true;
 
                 waveIn = new WaveInEvent();
-                waveIn.WaveFormat = new WaveFormat(44100, 16, 1);
+                waveIn.WaveFormat = new WaveFormat(44100, 8, 1);
                 waveIn.DataAvailable += WaveIn_DataAvailable;
                 waveIn.StartRecording();
 
-                AppendStatus("Recording started.");
+                AppendStatus("Transmission started.");
+
+                // Update status indicator
+                UpdateStatusIndicator(true);
             }
             catch (Exception ex)
             {
-                AppendStatus($"Error starting recording: {ex.Message}");
+                AppendStatus($"Error starting transmission: {ex.Message}");
             }
         }
 
-        private void btnStopRecording_Click(object sender, EventArgs e)
+        private void StopTransmission()
         {
             try
             {
-                if (isRecording && waveIn != null)
+                if (isTransmitting && waveIn != null)
                 {
                     waveIn.StopRecording();
                     waveIn.Dispose();
                     waveIn = null;
-                    isRecording = false;
+                    isTransmitting = false;
 
                     radioController.EndTXMode();
-                    AppendStatus("Recording stopped.");
+                    AppendStatus("Transmission stopped.");
+                    radioController.StartRXMode();
+                    // Update status indicator
+                    UpdateStatusIndicator(false);
                 }
             }
             catch (Exception ex)
             {
-                AppendStatus($"Error stopping recording: {ex.Message}");
+                AppendStatus($"Error stopping transmission: {ex.Message}");
             }
         }
 
@@ -513,37 +480,18 @@ namespace RadioControllerApp
         {
             try
             {
-                if (isRecording && radioController != null)
+                if (isTransmitting && radioController != null)
                 {
                     byte[] buffer = new byte[e.BytesRecorded];
                     Array.Copy(e.Buffer, buffer, e.BytesRecorded);
 
-                    // Convert audio data to the required format if necessary
-                    await radioController.SendAudioDataAsync(buffer);
+                    // Send audio data asynchronously
+                    await radioController.SendAudioDataAsync(buffer, 0, buffer.Length);
                 }
             }
             catch (Exception ex)
             {
                 AppendStatus($"Error sending audio data: {ex.Message}");
-            }
-        }
-
-        private void btnPlayReceivedAudio_Click(object sender, EventArgs e)
-        {
-            try
-            {
-                if (waveOut == null)
-                {
-                    waveOut = new WaveOutEvent();
-                    waveOut.Init(receivedAudioBuffer);
-                }
-                waveOut.Play();
-
-                AppendStatus("Playing received audio.");
-            }
-            catch (Exception ex)
-            {
-                AppendStatus($"Error playing received audio: {ex.Message}");
             }
         }
 
@@ -554,9 +502,39 @@ namespace RadioControllerApp
 
         private void RadioController_AudioDataReceived(object sender, byte[] data)
         {
-            // Buffer the received audio data
-            receivedAudioBuffer.AddSamples(data, 0, data.Length);
-            AppendStatus($"Audio data received. Length: {data.Length} bytes.");
+            Console.WriteLine($"AudioDataReceived called with {data.Length} bytes");
+
+            if (!preBufferingComplete)
+            {
+                preBufferQueue.Enqueue(data);
+                preBufferedBytes += data.Length;
+
+                if (preBufferedBytes >= PreBufferSize)
+                {
+                    // Pre-buffering complete, start playback
+                    preBufferingComplete = true;
+
+                    // Add all pre-buffered data to the buffer
+                    while (preBufferQueue.TryDequeue(out byte[] preBufferData))
+                    {
+                        receivedAudioBuffer.AddSamples(preBufferData, 0, preBufferData.Length);
+                    }
+
+                    // Start playback
+                    waveOut.Play();
+                }
+            }
+            else
+            {
+                // Add received audio data to the buffer
+                receivedAudioBuffer.AddSamples(data, 0, data.Length);
+
+                // Ensure playback is ongoing
+                if (waveOut.PlaybackState != PlaybackState.Playing)
+                {
+                    waveOut.Play();
+                }
+            }
         }
 
         private void AppendStatus(string message)
@@ -571,19 +549,30 @@ namespace RadioControllerApp
             }
         }
 
+        private void UpdateStatusIndicator(bool isTransmitting)
+        {
+            if (pnlStatusIndicator.InvokeRequired)
+            {
+                pnlStatusIndicator.Invoke(new Action(() => UpdateStatusIndicator(isTransmitting)));
+            }
+            else
+            {
+                if (isTransmitting)
+                {
+                    pnlStatusIndicator.BackColor = System.Drawing.Color.Red;
+                }
+                else
+                {
+                    pnlStatusIndicator.BackColor = System.Drawing.Color.Green;
+                }
+            }
+        }
+
         private void ToggleControls(bool isEnabled)
         {
-            btnInitialize.Enabled = isEnabled;
             btnTune.Enabled = isEnabled;
             btnSetFilters.Enabled = isEnabled;
-            btnStartRX.Enabled = isEnabled;
-            btnStartTX.Enabled = isEnabled;
-            btnEndTX.Enabled = isEnabled;
-            btnStop.Enabled = isEnabled;
-
-            btnStartRecording.Enabled = isEnabled;
-            btnStopRecording.Enabled = isEnabled;
-            btnPlayReceivedAudio.Enabled = isEnabled;
+            btnSetPTTKey.Enabled = isEnabled;
 
             // Disable connection buttons appropriately
             btnOpenConnection.Enabled = !isEnabled;
@@ -609,6 +598,77 @@ namespace RadioControllerApp
             {
                 waveOut.Dispose();
                 waveOut = null;
+            }
+
+            // Save configurations
+            SaveConfigurations();
+        }
+
+        private void LoadConfigurations()
+        {
+            string configFile = "config.ini";
+            if (File.Exists(configFile))
+            {
+                string[] lines = File.ReadAllLines(configFile);
+                foreach (string line in lines)
+                {
+                    if (line.StartsWith("PortName="))
+                    {
+                        txtPortName.Text = line.Substring("PortName=".Length);
+                    }
+                    else if (line.StartsWith("PTTKey="))
+                    {
+                        if (Enum.TryParse(line.Substring("PTTKey=".Length), out Keys key))
+                        {
+                            pttKey = key;
+                        }
+                    }
+                    else if (line.StartsWith("TXFrequency="))
+                    {
+                        txtTXFrequency.Text = line.Substring("TXFrequency=".Length);
+                    }
+                    else if (line.StartsWith("RXFrequency="))
+                    {
+                        txtRXFrequency.Text = line.Substring("RXFrequency=".Length);
+                    }
+                    else if (line.StartsWith("Tone="))
+                    {
+                        txtTone.Text = line.Substring("Tone=".Length);
+                    }
+                    else if (line.StartsWith("SquelchLevel="))
+                    {
+                        txtSquelchLevel.Text = line.Substring("SquelchLevel=".Length);
+                    }
+                    else if (line.StartsWith("Emphasis="))
+                    {
+                        chkEmphasis.Checked = line.Substring("Emphasis=".Length) == "True";
+                    }
+                    else if (line.StartsWith("Highpass="))
+                    {
+                        chkHighpass.Checked = line.Substring("Highpass=".Length) == "True";
+                    }
+                    else if (line.StartsWith("Lowpass="))
+                    {
+                        chkLowpass.Checked = line.Substring("Lowpass=".Length) == "True";
+                    }
+                }
+            }
+        }
+
+        private void SaveConfigurations()
+        {
+            string configFile = "config.ini";
+            using (StreamWriter writer = new StreamWriter(configFile))
+            {
+                writer.WriteLine($"PortName={txtPortName.Text}");
+                writer.WriteLine($"PTTKey={pttKey}");
+                writer.WriteLine($"TXFrequency={txtTXFrequency.Text}");
+                writer.WriteLine($"RXFrequency={txtRXFrequency.Text}");
+                writer.WriteLine($"Tone={txtTone.Text}");
+                writer.WriteLine($"SquelchLevel={txtSquelchLevel.Text}");
+                writer.WriteLine($"Emphasis={chkEmphasis.Checked}");
+                writer.WriteLine($"Highpass={chkHighpass.Checked}");
+                writer.WriteLine($"Lowpass={chkLowpass.Checked}");
             }
         }
     }

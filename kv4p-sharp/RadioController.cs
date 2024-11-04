@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO.Ports;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -73,6 +74,7 @@ public class RadioController : IDisposable
             WriteTimeout = writeTimeout
         };
         serialPort.DataReceived += SerialPort_DataReceived;
+
     }
 
     public void OpenConnection()
@@ -181,7 +183,7 @@ public class RadioController : IDisposable
         SendCommand(ESP32Command.FILTERS, paramsStr);
     }
 
-    public async Task SendAudioDataAsync(byte[] audioData, CancellationToken cancellationToken = default)
+    public async Task SendAudioDataAsync(byte[] audioData, int offset, int count, CancellationToken cancellationToken = default)
     {
         lock (_syncLock)
         {
@@ -193,10 +195,10 @@ public class RadioController : IDisposable
         int chunkSize = 512;
         Stopwatch stopwatch = new Stopwatch();
 
-        for (int i = 0; i < audioData.Length; i += chunkSize)
+        for (int i = offset; i < count; i += chunkSize)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            int remaining = audioData.Length - i;
+            int remaining = count - i;
             int size = remaining > chunkSize ? chunkSize : remaining;
             byte[] chunk = new byte[size];
             Array.Copy(audioData, i, chunk, 0, size);
@@ -216,6 +218,7 @@ public class RadioController : IDisposable
             }
         }
     }
+
 
     private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
     {
@@ -246,7 +249,7 @@ public class RadioController : IDisposable
         {
             mode = currentMode;
         }
-        if (mode == RadioMode.RX)
+        if (mode != RadioMode.TX)
         {
             // Raise an event with the received audio data
             OnAudioDataReceived(data);
