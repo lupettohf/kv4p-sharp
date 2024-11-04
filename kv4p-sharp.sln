@@ -3,9 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.11.35312.102
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "kv4p-sharp-lib", "kv4p-sharp\kv4p-sharp-lib.csproj", "{321A4BEA-94AB-4345-91EA-A603180603D4}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "kv4p-sharp-lib", "kv4p-sharp\kv4p-sharp-lib.csproj", "{321A4BEA-94AB-4345-91EA-A603180603D4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RadioGUI", "RadioGUI\RadioGUI.csproj", "{833C55A9-5DE4-4B46-8F4A-63EA59325E17}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "RadioGUI", "RadioGUI\RadioGUI.csproj", "{833C55A9-5DE4-4B46-8F4A-63EA59325E17}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
