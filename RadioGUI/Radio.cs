@@ -3,14 +3,17 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using NAudio.Wave;
+using NAudio.CoreAudioApi; // For volume control and level meters
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.IO.Ports;
+using System.Management;
+using System.Text.RegularExpressions;
 
 namespace RadioControllerApp
 {
     public class FormRadio : Form
     {
-
         // Pre-buffering fields
         private const int PreBufferSize = 5000; // Adjust as needed
         private ConcurrentQueue<byte[]> preBufferQueue = new ConcurrentQueue<byte[]>();
@@ -29,15 +32,19 @@ namespace RadioControllerApp
         private Keys pttKey = Keys.Space;
         private bool waitingForPTTKey = false;
 
+        // ESP32 Vendor IDs and Product IDs
+        private readonly List<int> ESP32_VENDOR_IDS = new List<int> { 4292 };
+        private readonly List<int> ESP32_PRODUCT_IDS = new List<int> { 60000 };
+
         // UI Controls
-        private TextBox txtPortName;
+        private ComboBox cmbPortName;
         private Button btnOpenConnection;
         private Button btnCloseConnection;
 
         private TextBox txtTXFrequency;
         private TextBox txtRXFrequency;
-        private TextBox txtTone;
-        private TextBox txtSquelchLevel;
+        private ComboBox cmbTone;
+        private ComboBox cmbSquelchLevel;
         private Button btnTune;
 
         private CheckBox chkEmphasis;
@@ -51,10 +58,66 @@ namespace RadioControllerApp
 
         private Panel pnlStatusIndicator;
 
+        private ComboBox cmbRecordingDevice;
+        private ComboBox cmbPlaybackDevice;
+
+        private TrackBar trkRecordingVolume;
+        private TrackBar trkPlaybackVolume;
+        private Label lblRecordingVolume;
+        private Label lblPlaybackVolume;
+
+        // Tone mappings
+        private Dictionary<string, int> toneMappings = new Dictionary<string, int>
+{
+    { "None", 0 },
+    { "67.0", 1 },
+    { "71.9", 2 },
+    { "74.4", 3 },
+    { "77.0", 4 },
+    { "79.7", 5 },
+    { "82.5", 6 },
+    { "85.4", 7 },
+    { "88.5", 8 },
+    { "91.5", 9 },
+    { "94.8", 10 },
+    { "97.4", 11 },
+    { "100.0", 12 },
+    { "103.5", 13 },
+    { "107.2", 14 },
+    { "110.9", 15 },
+    { "114.8", 16 },
+    { "118.8", 17 },
+    { "123.0", 18 },
+    { "127.3", 19 },
+    { "131.8", 20 },
+    { "136.5", 21 },
+    { "141.3", 22 },
+    { "146.2", 23 },
+    { "151.4", 24 },
+    { "156.7", 25 },
+    { "162.2", 26 },
+    { "167.9", 27 },
+    { "173.8", 28 },
+    { "179.9", 29 },
+    { "186.2", 30 },
+    { "192.8", 31 },
+    { "203.5", 32 },
+    { "210.7", 33 },
+    { "218.1", 34 },
+    { "225.7", 35 },
+    { "233.6", 36 },
+    { "241.8", 37 },
+    { "250.3", 38 }
+};
+
+
         public FormRadio()
         {
             InitializeComponent();
             InitializeRadioController();
+            PopulateSerialPorts();
+            PopulateAudioDevices();
+            InitializeWaveOut();
             LoadConfigurations();
         }
 
@@ -135,6 +198,17 @@ namespace RadioControllerApp
                 ScrollBars = ScrollBars.Vertical
             };
             mainLayout.Controls.Add(txtStatus, 0, 5);
+
+            // Add padding to each group box
+            foreach (Control control in mainLayout.Controls)
+            {
+                if (control is GroupBox)
+                {
+                    control.Padding = new Padding(10, 10, 10, 10);
+                    control.Margin = new Padding(0, 0, 0, 10); // Add bottom margin
+                }
+            }
+
         }
 
         private GroupBox CreateConnectionControls()
@@ -155,7 +229,7 @@ namespace RadioControllerApp
             grpConnection.Controls.Add(layout);
 
             Label lblPortName = new Label { Text = "Port Name:", Anchor = AnchorStyles.Right };
-            txtPortName = new TextBox { Text = "COM3", Anchor = AnchorStyles.Left };
+            cmbPortName = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left, Width = 200 };
             btnOpenConnection = new Button { Text = "Open Connection", AutoSize = true };
             btnCloseConnection = new Button { Text = "Close Connection", AutoSize = true };
 
@@ -163,12 +237,12 @@ namespace RadioControllerApp
             btnCloseConnection.Click += btnCloseConnection_Click;
 
             layout.Controls.Add(lblPortName, 0, 0);
-            layout.Controls.Add(txtPortName, 1, 0);
+            layout.Controls.Add(cmbPortName, 1, 0);
             layout.Controls.Add(btnOpenConnection, 2, 0);
             layout.Controls.Add(btnCloseConnection, 3, 0);
 
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Label
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // TextBox
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // ComboBox
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F)); // Button
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F)); // Button
 
@@ -197,9 +271,9 @@ namespace RadioControllerApp
             Label lblRXFrequency = new Label { Text = "RX Frequency:", Anchor = AnchorStyles.Right };
             txtRXFrequency = new TextBox { Text = "146.520", Anchor = AnchorStyles.Left };
             Label lblTone = new Label { Text = "Tone:", Anchor = AnchorStyles.Right };
-            txtTone = new TextBox { Text = "00", Anchor = AnchorStyles.Left };
+            cmbTone = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
             Label lblSquelchLevel = new Label { Text = "Squelch Level:", Anchor = AnchorStyles.Right };
-            txtSquelchLevel = new TextBox { Text = "0", Anchor = AnchorStyles.Left };
+            cmbSquelchLevel = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
             btnTune = new Button { Text = "Tune to Frequency", AutoSize = true };
 
             btnTune.Click += btnTune_Click;
@@ -209,13 +283,23 @@ namespace RadioControllerApp
             layout.Controls.Add(lblRXFrequency, 2, 0);
             layout.Controls.Add(txtRXFrequency, 3, 0);
             layout.Controls.Add(lblTone, 4, 0);
-            layout.Controls.Add(txtTone, 5, 0);
+            layout.Controls.Add(cmbTone, 5, 0);
 
             layout.Controls.Add(lblSquelchLevel, 0, 1);
-            layout.Controls.Add(txtSquelchLevel, 1, 1);
+            layout.Controls.Add(cmbSquelchLevel, 1, 1);
             layout.SetColumnSpan(btnTune, 4);
             layout.Controls.Add(btnTune, 2, 1);
-
+            // Populate cmbTone
+            foreach (var tone in toneMappings.Keys)
+            {
+                cmbTone.Items.Add(tone);
+            }
+            cmbTone.SelectedIndex = 0; // Default to "None"
+            for (int i = 0; i <= 9; i++)
+            {
+                cmbSquelchLevel.Items.Add(i.ToString());
+            }
+            cmbSquelchLevel.SelectedIndex = 1; // Default to 1
             // Adjust column styles
             for (int i = 0; i < 6; i += 2)
             {
@@ -267,18 +351,59 @@ namespace RadioControllerApp
                 Dock = DockStyle.Fill
             };
 
-            FlowLayoutPanel layout = new FlowLayoutPanel
+            // Adjusted layout to place recording and playback controls side by side
+            TableLayoutPanel layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                AutoSize = true,
-                WrapContents = false,
+                ColumnCount = 4,
+                RowCount = 3,
+                AutoSize = true
             };
             grpAudio.Controls.Add(layout);
+
+            Label lblRecordingDevice = new Label { Text = "Recording Device:", Anchor = AnchorStyles.Right };
+            cmbRecordingDevice = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left, Width = 200 };
+            Label lblPlaybackDevice = new Label { Text = "Playback Device:", Anchor = AnchorStyles.Right };
+            cmbPlaybackDevice = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left, Width = 200 };
+
+            lblRecordingVolume = new Label { Text = "Recording Volume:", Anchor = AnchorStyles.Right };
+            trkRecordingVolume = new TrackBar { Minimum = 0, Maximum = 100, Value = 100, TickFrequency = 10, Anchor = AnchorStyles.Left, Width = 150 };
+            lblPlaybackVolume = new Label { Text = "Playback Volume:", Anchor = AnchorStyles.Right };
+            trkPlaybackVolume = new TrackBar { Minimum = 0, Maximum = 100, Value = 100, TickFrequency = 10, Anchor = AnchorStyles.Left, Width = 150 };
 
             btnSetPTTKey = new Button { Text = "Set PTT Key", AutoSize = true };
             btnSetPTTKey.Click += btnSetPTTKey_Click;
 
-            layout.Controls.Add(btnSetPTTKey);
+            // First row: Recording and Playback Device labels and comboboxes
+            layout.Controls.Add(lblRecordingDevice, 0, 0);
+            layout.Controls.Add(cmbRecordingDevice, 1, 0);
+            layout.Controls.Add(lblPlaybackDevice, 2, 0);
+            layout.Controls.Add(cmbPlaybackDevice, 3, 0);
+
+            // Second row: Recording and Playback Volume labels and trackbars
+            layout.Controls.Add(lblRecordingVolume, 0, 1);
+            layout.Controls.Add(trkRecordingVolume, 1, 1);
+            layout.Controls.Add(lblPlaybackVolume, 2, 1);
+            layout.Controls.Add(trkPlaybackVolume, 3, 1);
+
+            // Third row: PTT Key button
+            layout.Controls.Add(btnSetPTTKey, 0, 2);
+            layout.SetColumnSpan(btnSetPTTKey, 4);
+
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            cmbPlaybackDevice.SelectedIndexChanged += CmbPlaybackDevice_SelectedIndexChanged;
+            cmbRecordingDevice.SelectedIndexChanged += CmbRecordingDevice_SelectedIndexChanged;
+
+            trkPlaybackVolume.ValueChanged += TrkPlaybackVolume_ValueChanged;
+            trkRecordingVolume.ValueChanged += TrkRecordingVolume_ValueChanged;
 
             return grpAudio;
         }
@@ -287,42 +412,196 @@ namespace RadioControllerApp
         {
             // Disable controls that require an open connection
             ToggleControls(false);
+        }
 
+        private void PopulateSerialPorts()
+        {
+            cmbPortName.Items.Clear();
+
+            // Get all available serial ports
+            var portNames = SerialPort.GetPortNames();
+
+            // Use ManagementObjectSearcher to get more info
+            var searcher = new ManagementObjectSearcher("SELECT * FROM WIN32_SerialPort");
+            var ports = searcher.Get();
+
+            List<SerialPortInfo> portList = new List<SerialPortInfo>();
+
+            foreach (var port in ports)
+            {
+                string name = port["Name"].ToString();
+                string deviceId = port["DeviceID"].ToString();
+                string pnpDeviceId = port["PNPDeviceID"].ToString();
+
+                // Extract Vendor ID and Product ID from PNPDeviceID
+                // Example PNPDeviceID: USB\VID_10C4&PID_EA60\0001
+                string vid = GetPropertyFromDeviceID(pnpDeviceId, "VID");
+                string pid = GetPropertyFromDeviceID(pnpDeviceId, "PID");
+
+                int vendorId = 0;
+                int productId = 0;
+
+                try
+                {
+                    vendorId = Convert.ToInt32(vid, 16);
+                    productId = Convert.ToInt32(pid, 16);
+                }
+                catch
+                {
+                    // Ignore if unable to parse VID and PID
+                }
+
+                bool isEsp32 = ESP32_VENDOR_IDS.Contains(vendorId) && ESP32_PRODUCT_IDS.Contains(productId);
+
+                portList.Add(new SerialPortInfo
+                {
+                    Name = name,
+                    DeviceId = deviceId,
+                    PnpDeviceId = pnpDeviceId,
+                    IsEsp32 = isEsp32,
+                });
+            }
+
+            // Now populate cmbPortName
+            foreach (var portInfo in portList)
+            {
+                cmbPortName.Items.Add(portInfo);
+            }
+
+            // Select the first port
+            if (cmbPortName.Items.Count > 0)
+                cmbPortName.SelectedIndex = 0;
+        }
+
+        private void PopulateAudioDevices()
+        {
+            // Populate recording devices
+            for (int n = 0; n < WaveIn.DeviceCount; n++)
+            {
+                var capabilities = WaveIn.GetCapabilities(n);
+                cmbRecordingDevice.Items.Add(new WaveInDevice { DeviceNumber = n, ProductName = capabilities.ProductName });
+            }
+
+            // Select default recording device
+            if (cmbRecordingDevice.Items.Count > 0)
+                cmbRecordingDevice.SelectedIndex = 0;
+
+            // Populate playback devices
+            var enumerator = new MMDeviceEnumerator();
+            var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
+            foreach (var device in devices)
+            {
+                cmbPlaybackDevice.Items.Add(new WaveOutDevice { DeviceNumber = 0, ProductName = device.FriendlyName, MMDevice = device });
+            }
+
+            // Select default playback device
+            if (cmbPlaybackDevice.Items.Count > 0)
+                cmbPlaybackDevice.SelectedIndex = 0;
+        }
+
+        private void InitializeWaveOut()
+        {
             receivedAudioBuffer = new BufferedWaveProvider(new WaveFormat(44100, 8, 1))
             {
                 BufferDuration = TimeSpan.FromSeconds(5),
                 DiscardOnBufferOverflow = true
             };
             waveOut = new WaveOutEvent();
+
+            var selectedPlaybackDevice = cmbPlaybackDevice.SelectedItem as WaveOutDevice;
+            if (selectedPlaybackDevice != null)
+            {
+                //waveOut.DeviceNumber = selectedPlaybackDevice.DeviceNumber;
+                // Use NAudio.CoreAudioApi to control playback volume
+                //waveOut.DeviceNumber = -1; // Use default device
+            }
+
             waveOut.Init(receivedAudioBuffer);
         }
 
+        private void CmbPlaybackDevice_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            // Re-initialize waveOut with the selected device
+            if (waveOut != null)
+            {
+                waveOut.Stop();
+                waveOut.Dispose();
+            }
+            InitializeWaveOut();
+        }
+
+        private void CmbRecordingDevice_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            // Do nothing for now. Recording device is set when starting transmission.
+        }
+
+        private void TrkPlaybackVolume_ValueChanged(object sender, EventArgs e)
+        {
+            SetPlaybackVolume(trkPlaybackVolume.Value);
+        }
+
+        private void TrkRecordingVolume_ValueChanged(object sender, EventArgs e)
+        {
+            SetRecordingVolume(trkRecordingVolume.Value);
+        }
+
+        private void SetPlaybackVolume(int volume)
+        {
+            var selectedPlaybackDevice = cmbPlaybackDevice.SelectedItem as WaveOutDevice;
+            if (selectedPlaybackDevice != null && selectedPlaybackDevice.MMDevice != null)
+            {
+                selectedPlaybackDevice.MMDevice.AudioEndpointVolume.MasterVolumeLevelScalar = volume / 100.0f;
+            }
+        }
+
+        private void SetRecordingVolume(int volume)
+        {
+            var selectedRecordingDevice = cmbRecordingDevice.SelectedItem as WaveInDevice;
+            if (selectedRecordingDevice != null)
+            {
+                // Setting recording volume is not straightforward with WaveInEvent
+                // Need to use NAudio.CoreAudioApi
+                var enumerator = new MMDeviceEnumerator();
+                var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
+                foreach (var device in devices)
+                {
+                    if (device.FriendlyName == selectedRecordingDevice.ProductName)
+                    {
+                        device.AudioEndpointVolume.MasterVolumeLevelScalar = volume / 100.0f;
+                        break;
+                    }
+                }
+            }
+        }
 
         private void btnOpenConnection_Click(object sender, EventArgs e)
         {
             try
             {
-                string portName = txtPortName.Text.Trim();
-                if (string.IsNullOrEmpty(portName))
+                var selectedPortInfo = cmbPortName.SelectedItem as SerialPortInfo;
+                if (selectedPortInfo != null)
                 {
-                    AppendStatus("Please enter a valid port name.");
+                    string portName = selectedPortInfo.DeviceId;
+                    radioController = new RadioController(portName);
+                    radioController.ErrorOccurred += RadioController_ErrorOccurred;
+                    radioController.AudioDataReceived += RadioController_AudioDataReceived;
+                    radioController.OpenConnection();
+
+                    radioController.Initialize();
+                    btnTune_Click(null, null);
+                    // Start RX mode
+                    isTransmitting = false;
+                    UpdateStatusIndicator(false);
+
+                    AppendStatus($"Connection opened on {portName}.");
+                    radioController.StartRXMode();
+                    ToggleControls(true);
+                }
+                else
+                {
+                    AppendStatus("Please select a valid port.");
                     return;
                 }
-
-                radioController = new RadioController(portName);
-                radioController.ErrorOccurred += RadioController_ErrorOccurred;
-                radioController.AudioDataReceived += RadioController_AudioDataReceived;
-                radioController.OpenConnection();
-
-                radioController.Initialize();
-                btnTune_Click(null, null);
-                // Start RX mode
-                isTransmitting = false;
-                UpdateStatusIndicator(false);
-
-                AppendStatus($"Connection opened on {portName}.");
-                radioController.StartRXMode();
-                ToggleControls(true);
             }
             catch (Exception ex)
             {
@@ -355,17 +634,23 @@ namespace RadioControllerApp
             {
                 string txFreq = txtTXFrequency.Text.Trim();
                 string rxFreq = txtRXFrequency.Text.Trim();
-                int tone = int.Parse(txtTone.Text.Trim());
-                int squelch = int.Parse(txtSquelchLevel.Text.Trim());
 
-                radioController.TuneToFrequency(txFreq, rxFreq, tone, squelch);
-                AppendStatus($"Tuned to TX: {txFreq}, RX: {rxFreq}, Tone: {tone}, Squelch Level: {squelch}");
+                // Get selected tone
+                string selectedTone = cmbTone.SelectedItem.ToString();
+                int toneValue = toneMappings[selectedTone];
+
+                // Get selected squelch level
+                int squelch = int.Parse(cmbSquelchLevel.SelectedItem.ToString());
+
+                radioController.TuneToFrequency(txFreq, rxFreq, toneValue, squelch);
+                AppendStatus($"Tuned to TX: {txFreq}, RX: {rxFreq}, Tone: {selectedTone}, Squelch Level: {squelch}");
             }
             catch (Exception ex)
             {
                 AppendStatus($"Error tuning frequency: {ex.Message}");
             }
         }
+
 
         private void btnSetFilters_Click(object sender, EventArgs e)
         {
@@ -435,11 +720,21 @@ namespace RadioControllerApp
                 isTransmitting = true;
 
                 waveIn = new WaveInEvent();
+
+                var selectedRecordingDevice = cmbRecordingDevice.SelectedItem as WaveInDevice;
+                if (selectedRecordingDevice != null)
+                {
+                    waveIn.DeviceNumber = selectedRecordingDevice.DeviceNumber;
+                }
+
                 waveIn.WaveFormat = new WaveFormat(44100, 8, 1);
                 waveIn.DataAvailable += WaveIn_DataAvailable;
                 waveIn.StartRecording();
 
                 AppendStatus("Transmission started.");
+
+                // Disable recording device selection during transmission
+                cmbRecordingDevice.Enabled = false;
 
                 // Update status indicator
                 UpdateStatusIndicator(true);
@@ -464,6 +759,10 @@ namespace RadioControllerApp
                     radioController.EndTXMode();
                     AppendStatus("Transmission stopped.");
                     radioController.StartRXMode();
+
+                    // Enable recording device selection
+                    cmbRecordingDevice.Enabled = true;
+
                     // Update status indicator
                     UpdateStatusIndicator(false);
                 }
@@ -612,7 +911,15 @@ namespace RadioControllerApp
                 {
                     if (line.StartsWith("PortName="))
                     {
-                        txtPortName.Text = line.Substring("PortName=".Length);
+                        string portName = line.Substring("PortName=".Length);
+                        foreach (SerialPortInfo portInfo in cmbPortName.Items)
+                        {
+                            if (portInfo.DeviceId == portName)
+                            {
+                                cmbPortName.SelectedItem = portInfo;
+                                break;
+                            }
+                        }
                     }
                     else if (line.StartsWith("PTTKey="))
                     {
@@ -631,11 +938,21 @@ namespace RadioControllerApp
                     }
                     else if (line.StartsWith("Tone="))
                     {
-                        txtTone.Text = line.Substring("Tone=".Length);
+                        if (int.TryParse(line.Substring("Tone=".Length), out int toneValue))
+                        {
+                            foreach (var item in toneMappings)
+                            {
+                                if (item.Value == toneValue)
+                                {
+                                    cmbTone.SelectedItem = item.Key;
+                                    break;
+                                }
+                            }
+                        }
                     }
                     else if (line.StartsWith("SquelchLevel="))
                     {
-                        txtSquelchLevel.Text = line.Substring("SquelchLevel=".Length);
+                        cmbSquelchLevel.SelectedItem = line.Substring("SquelchLevel=".Length);
                     }
                     else if (line.StartsWith("Emphasis="))
                     {
@@ -649,6 +966,48 @@ namespace RadioControllerApp
                     {
                         chkLowpass.Checked = line.Substring("Lowpass=".Length) == "True";
                     }
+                    else if (line.StartsWith("RecordingDevice="))
+                    {
+                        if (int.TryParse(line.Substring("RecordingDevice=".Length), out int deviceNumber))
+                        {
+                            foreach (WaveInDevice device in cmbRecordingDevice.Items)
+                            {
+                                if (device.DeviceNumber == deviceNumber)
+                                {
+                                    cmbRecordingDevice.SelectedItem = device;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    else if (line.StartsWith("PlaybackDevice="))
+                    {
+                        string playbackDeviceName = line.Substring("PlaybackDevice=".Length);
+                        foreach (WaveOutDevice device in cmbPlaybackDevice.Items)
+                        {
+                            if (device.ProductName == playbackDeviceName)
+                            {
+                                cmbPlaybackDevice.SelectedItem = device;
+                                break;
+                            }
+                        }
+                    }
+                    else if (line.StartsWith("RecordingVolume="))
+                    {
+                        if (int.TryParse(line.Substring("RecordingVolume=".Length), out int volume))
+                        {
+                            trkRecordingVolume.Value = volume;
+                            SetRecordingVolume(volume);
+                        }
+                    }
+                    else if (line.StartsWith("PlaybackVolume="))
+                    {
+                        if (int.TryParse(line.Substring("PlaybackVolume=".Length), out int volume))
+                        {
+                            trkPlaybackVolume.Value = volume;
+                            SetPlaybackVolume(volume);
+                        }
+                    }
                 }
             }
         }
@@ -656,18 +1015,105 @@ namespace RadioControllerApp
         private void SaveConfigurations()
         {
             string configFile = "config.ini";
+            string selectedTone = cmbTone.SelectedItem.ToString();
+            int toneValue = toneMappings[selectedTone];
             using (StreamWriter writer = new StreamWriter(configFile))
             {
-                writer.WriteLine($"PortName={txtPortName.Text}");
+                // Save selected port
+                var selectedPortInfo = cmbPortName.SelectedItem as SerialPortInfo;
+                if (selectedPortInfo != null)
+                {
+                    writer.WriteLine($"PortName={selectedPortInfo.DeviceId}");
+                }
+                else
+                {
+                    writer.WriteLine("PortName=");
+                }
+
                 writer.WriteLine($"PTTKey={pttKey}");
                 writer.WriteLine($"TXFrequency={txtTXFrequency.Text}");
                 writer.WriteLine($"RXFrequency={txtRXFrequency.Text}");
-                writer.WriteLine($"Tone={txtTone.Text}");
-                writer.WriteLine($"SquelchLevel={txtSquelchLevel.Text}");
+                writer.WriteLine($"Tone={toneValue}");
+                writer.WriteLine($"SquelchLevel={cmbSquelchLevel.SelectedItem}");
                 writer.WriteLine($"Emphasis={chkEmphasis.Checked}");
                 writer.WriteLine($"Highpass={chkHighpass.Checked}");
                 writer.WriteLine($"Lowpass={chkLowpass.Checked}");
+
+                // Save selected recording device
+                var selectedRecordingDevice = cmbRecordingDevice.SelectedItem as WaveInDevice;
+                if (selectedRecordingDevice != null)
+                {
+                    writer.WriteLine($"RecordingDevice={selectedRecordingDevice.DeviceNumber}");
+                }
+                else
+                {
+                    writer.WriteLine("RecordingDevice=");
+                }
+
+                // Save selected playback device
+                var selectedPlaybackDevice = cmbPlaybackDevice.SelectedItem as WaveOutDevice;
+                if (selectedPlaybackDevice != null)
+                {
+                    writer.WriteLine($"PlaybackDevice={selectedPlaybackDevice.ProductName}");
+                }
+                else
+                {
+                    writer.WriteLine("PlaybackDevice=");
+                }
+
+                writer.WriteLine($"RecordingVolume={trkRecordingVolume.Value}");
+                writer.WriteLine($"PlaybackVolume={trkPlaybackVolume.Value}");
             }
+        }
+
+        private string GetPropertyFromDeviceID(string deviceId, string property)
+        {
+            string result = "";
+            string pattern = property + "_([0-9A-F]{4})";
+            var match = Regex.Match(deviceId, pattern, RegexOptions.IgnoreCase);
+            if (match.Success)
+            {
+                result = match.Groups[1].Value;
+            }
+            return result;
+        }
+    }
+
+
+    class SerialPortInfo
+    {
+        public string Name { get; set; }
+        public string DeviceId { get; set; }
+        public string PnpDeviceId { get; set; }
+        public bool IsEsp32 { get; set; }
+
+        public override string ToString()
+        {
+            if (IsEsp32)
+                return Name + " (ESP32)";
+            else
+                return Name;
+        }
+    }
+
+    class WaveInDevice
+    {
+        public int DeviceNumber { get; set; }
+        public string ProductName { get; set; }
+        public override string ToString()
+        {
+            return ProductName;
+        }
+    }
+
+    class WaveOutDevice
+    {
+        public int DeviceNumber { get; set; }
+        public string ProductName { get; set; }
+        public MMDevice MMDevice { get; set; } // Added for volume control
+        public override string ToString()
+        {
+            return ProductName;
         }
     }
 }
