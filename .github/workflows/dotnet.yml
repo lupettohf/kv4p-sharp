@@ -1,28 +1,56 @@
-# This workflow will build a .NET project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
-
-name: .NET
+name: Build and Release RadioGUI
 
 on:
   push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
+    branches:
+      - '**' # Run on all branches
+    tags:
+      - 'v*' # Also runs on tags starting with 'v*' (e.g., v1.0)
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v3
+
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v3
       with:
-        dotnet-version: 8.0.x
+        dotnet-version: '7.x' # Use the appropriate .NET SDK version for your project
+
     - name: Restore dependencies
       run: dotnet restore
-    - name: Build
-      run: dotnet build --no-restore
-    - name: Test
-      run: dotnet test --no-build --verbosity normal
+
+    - name: Build Solution
+      run: dotnet build --configuration Release
+
+    - name: Publish binaries
+      run: dotnet publish RadioGUI/RadioGUI.csproj --configuration Release --output ./publish
+
+    - name: Upload binaries if successful
+      if: success()
+      uses: actions/upload-artifact@v3
+      with:
+        name: RadioGUI-binaries
+        path: ./publish
+
+  release:
+    runs-on: windows-latest
+    needs: build
+    if: github.ref_type == 'tag' && success() # Only release if a tag push and build was successful
+
+    steps:
+    - name: Download binaries
+      uses: actions/download-artifact@v3
+      with:
+        name: RadioGUI-binaries
+        path: ./publish
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ./publish/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
