@@ -349,7 +349,7 @@ public class RadioController : IDisposable
         freq = Math.Min(freq, 148.0f);
         freq = Math.Max(freq, 144.0f);
 
-        string formattedFreq = freq.ToString("000.000", System.Globalization.CultureInfo.InvariantCulture);
+        string formattedFreq = freq.ToString("000.0000", System.Globalization.CultureInfo.InvariantCulture);
         return formattedFreq;
     }
 
