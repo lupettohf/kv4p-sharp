@@ -44,10 +44,10 @@ public class RadioController : IDisposable
     }
 
     private RadioMode currentMode = RadioMode.STARTUP;
-    private const int MIN_FIRMWARE_VER = 1;
+    private const int MIN_FIRMWARE_VER = 4;
     private string versionStrBuffer = "";
 
-    private const int AUDIO_SAMPLE_RATE = 44100;
+    private const int AUDIO_SAMPLE_RATE = 16000;
 
     // Synchronization locks
     private readonly object _syncLock = new object();
@@ -146,15 +146,16 @@ public class RadioController : IDisposable
         }
         SendCommand(ESP32Command.STOP);
     }
-
+    
     /// <summary>
-    /// Tunes the radio to the specified frequencies with tone and squelch level.
+    /// Tunes the radio to the specified frequencies with tone, squelch level, and bandwidth.
     /// </summary>
     /// <param name="txFrequencyStr">Transmit frequency as a string (e.g., "146.520").</param>
     /// <param name="rxFrequencyStr">Receive frequency as a string (e.g., "146.520").</param>
     /// <param name="tone">Tone value as an integer (00 to 99).</param>
     /// <param name="squelchLevel">Squelch level as an integer (0 to 9).</param>
-    public void TuneToFrequency(string txFrequencyStr, string rxFrequencyStr, int tone, int squelchLevel)
+    /// <param name="wideband">True for 25kHz bandwidth, false for 12.5kHz bandwidth.</param>
+    public void TuneToFrequency(string txFrequencyStr, string rxFrequencyStr, int tone, int squelchLevel, bool wideband)
     {
         if (string.IsNullOrWhiteSpace(txFrequencyStr))
             throw new ArgumentException("Transmit frequency cannot be null or empty.", nameof(txFrequencyStr));
@@ -172,11 +173,12 @@ public class RadioController : IDisposable
         if (squelchStr.Length != 1)
             throw new ArgumentException("Squelch level must be a single digit (0-9).", nameof(squelchLevel));
 
-        // Build parameters string
-        string paramsStr = txFrequencyStr + rxFrequencyStr + toneStr + squelchStr;
+        // Build parameters string with bandwidth setting
+        string bandwidthSetting = wideband ? "W" : "N";
+        string paramsStr = txFrequencyStr + rxFrequencyStr + toneStr + squelchStr + bandwidthSetting;
         SendCommand(ESP32Command.TUNE_TO, paramsStr);
     }
-
+    
     public void SetFilters(bool emphasis, bool highpass, bool lowpass)
     {
         string paramsStr = (emphasis ? "1" : "0") + (highpass ? "1" : "0") + (lowpass ? "1" : "0");
@@ -241,7 +243,7 @@ public class RadioController : IDisposable
             HandleData(receivedData);
         }
     }
-
+    
     private void HandleData(byte[] data)
     {
         RadioMode mode;
@@ -256,7 +258,7 @@ public class RadioController : IDisposable
         }
         else if (mode == RadioMode.STARTUP)
         {
-            // Handle firmware version check
+            // Handle firmware version check with updated minimum version
             string dataStr = System.Text.Encoding.UTF8.GetString(data);
             lock (_versionStrBufferLock)
             {
@@ -271,7 +273,7 @@ public class RadioController : IDisposable
                         {
                             if (verInt < MIN_FIRMWARE_VER)
                             {
-                                OnErrorOccurred(new ErrorEventArgs(new InvalidOperationException("Unsupported firmware version.")));
+                                OnErrorOccurred(new ErrorEventArgs(new InvalidOperationException($"Unsupported firmware version. Version 4 or higher is required.")));
                             }
                             else
                             {
@@ -279,7 +281,6 @@ public class RadioController : IDisposable
                                 {
                                     currentMode = RadioMode.RX;
                                 }
-                                // No need to initialize audio playback
                             }
                         }
                         else
