@@ -1,6 +1,6 @@
 # KV4P-Sharp
 
-KV4P-Sharp is a C# library designed to communicate with KV4P USB VHF radios. It facilitates control over radio operations through serial communication but does not handle audio encoding or decoding. Users must manage audio processing separately by encoding/decoding audio data as PCM 44100Hz, 8-bit mono.
+KV4P-Sharp is a C# library designed to communicate with KV4P USB VHF radios. It facilitates control over radio operations through serial communication but does not handle audio encoding or decoding. Users must manage audio processing separately by encoding/decoding audio data as PCM ~44100~ 16000Hz, 8-bit mono.
 
 ## Features
 - Control transmit (PTT) and receive (RX) modes.
